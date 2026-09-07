@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+}
+
+/* iOS Safari zooms the whole page when a focused input's font is under 16px,
+   and it does not zoom back out. This is a correctness rule, not a taste one,
+   so it lives here rather than depending on every form remembering it. */
+input,
+select,
+textarea {
+  font-size: max(16px, 1rem);
+}
+
+/* Money must line up in columns. Without tabular figures the report table's
+   digits are proportionally spaced and the column reads as noise. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
