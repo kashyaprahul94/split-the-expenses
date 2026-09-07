@@ -56,28 +56,46 @@ export function isCalendarDate(value: string): value is CalendarDate {
   return toCalendarDate(fromCalendarDate(value)) === value;
 }
 
-/** "7 Sep 2026" in the reader's locale. */
+const MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/**
+ * "7 Sep 2026".
+ *
+ * Formatted by hand rather than with `toLocaleDateString`, because these
+ * strings are rendered on the server and then hydrated in the browser. Intl
+ * resolves the ambient locale differently in each — Node said "Sep 2, 2026"
+ * while the browser said "2 Sept 2026" — and React treats that as a hydration
+ * failure and re-renders the tree. Even pinning a locale would leave the
+ * result at the mercy of two different ICU versions agreeing on "Sep" vs
+ * "Sept".
+ *
+ * The app is English-only, so a fixed table costs nothing and is identical
+ * everywhere.
+ */
 export function formatCalendarDate(date: CalendarDate): string {
-  return new Date(fromCalendarDate(date)).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  const [year, month, day] = date.split("-").map(Number);
+  return `${day} ${MONTHS[month - 1] ?? "?"} ${year}`;
 }
 
 /**
  * An instant, for the activity log: "7 Sep, 14:32". Takes the timestamptz
  * string Postgres returns, which unlike a bare date does carry a zone.
+ *
+ * Also hand-formatted, for the same hydration reason as above — and note it
+ * resolves in the *local* zone, so anything using this must render on the
+ * client only. The server's zone is not the reader's.
  */
 export function formatInstant(timestamp: string): string {
   const moment = new Date(timestamp);
   if (Number.isNaN(moment.getTime())) return "";
-  return moment.toLocaleString(undefined, {
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const day = moment.getDate();
+  const month = MONTHS[moment.getMonth()];
+  const hours = String(moment.getHours()).padStart(2, "0");
+  const minutes = String(moment.getMinutes()).padStart(2, "0");
+  return `${day} ${month}, ${hours}:${minutes}`;
 }
 
 /** "2 hours ago" for recent activity, falling back to a date once it is old

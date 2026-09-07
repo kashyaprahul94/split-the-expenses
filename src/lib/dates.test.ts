@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 import {
+  formatCalendarDate,
   formatRelative,
   fromCalendarDate,
   isCalendarDate,
@@ -60,6 +61,31 @@ describe("fromCalendarDate", () => {
     // that day. Building from parts handles this; adding 86400000ms would not.
     for (const date of ["2026-03-08", "2026-03-29", "2026-11-01", "2026-10-25"]) {
       expect(toCalendarDate(fromCalendarDate(date))).toBe(date);
+    }
+  });
+});
+
+describe("formatCalendarDate", () => {
+  /**
+   * These assertions exist to stop anyone reintroducing `toLocaleDateString`.
+   * It renders differently on the server and in the browser — Node produced
+   * "Sep 2, 2026" while the browser produced "2 Sept 2026" — which React
+   * reports as a hydration failure and then re-renders the whole tree.
+   */
+  it("produces one fixed format, independent of locale", () => {
+    expect(formatCalendarDate("2026-09-02")).toBe("2 Sep 2026");
+    expect(formatCalendarDate("2026-01-31")).toBe("31 Jan 2026");
+    expect(formatCalendarDate("2026-12-25")).toBe("25 Dec 2026");
+  });
+
+  it("emits exactly one shape for every month of the year", () => {
+    // A strict pattern, so switching back to Intl fails here rather than in a
+    // browser: locale output varies in separator, order and month spelling
+    // ("Sept"), and none of those match this.
+    const shape = /^\d{1,2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4}$/;
+    for (let month = 1; month <= 12; month++) {
+      const date = `2026-${String(month).padStart(2, "0")}-15`;
+      expect(formatCalendarDate(date)).toMatch(shape);
     }
   });
 });
