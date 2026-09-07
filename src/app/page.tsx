@@ -1,14 +1,18 @@
 import { CreateGroup, RecentGroups } from "@/components/CreateGroup";
 import { ImportGroup } from "@/components/ImportGroup";
 import { Card, SectionTitle } from "@/components/ui";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export default function Home() {
   return (
     <main className="mx-auto w-full max-w-md space-y-5 p-5 pt-10">
       <header className="space-y-1.5">
-        <h1 className="text-2xl font-semibold tracking-tight">
-          Split the expenses
-        </h1>
+        <div className="flex items-start justify-between gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Split the expenses
+          </h1>
+          <ThemeToggle />
+        </div>
         <p className="text-sm opacity-70">
           Share costs with a group and see who owes whom. No accounts, no
           logins — just a link you share.

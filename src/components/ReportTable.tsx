@@ -5,8 +5,10 @@ import type { MemberBalance } from "@/lib/balances";
 import type { MemberView } from "@/lib/groups";
 import { formatMinor, formatMoney } from "@/lib/money";
 import { formatCalendarDate } from "@/lib/dates";
+import { categoryFor } from "@/lib/categories";
 import type { CurrencyCode, Expense, ExpenseShare } from "@/lib/types";
-import { Empty, Money, NetAmount, quietButton } from "./ui";
+import { BalanceTable } from "./BalanceTable";
+import { CategoryIcon, Empty, Money, quietButton } from "./ui";
 
 /**
  * One row per expense, one column per member. This is the view that makes a
@@ -124,12 +126,16 @@ export function ReportTable({
       </div>
 
       {/* Twenty members is twenty columns, so the table scrolls inside its own
-          box rather than making the whole page scroll sideways. */}
-      <div className="-mx-4 overflow-x-auto px-4">
+          box rather than making the whole page scroll sideways.
+
+          No negative margin on this box. With `-mx-4 px-4` the scrollport
+          starts a rem left of the table, so `left: 0` pins the frozen column
+          outside the table and rows slide visibly through the gap beside it. */}
+      <div className="overflow-x-auto">
         <table className="w-full min-w-max border-collapse text-sm">
           <thead>
             <tr className="border-b border-black/10 dark:border-white/15">
-              <th className="sticky left-0 z-10 bg-white py-2 pr-3 text-left font-medium dark:bg-neutral-900">
+              <th className="frozen-col py-2 pr-3 text-left font-medium">
                 Expense
               </th>
               <th className="px-3 py-2 text-right font-medium whitespace-nowrap">
@@ -155,11 +161,20 @@ export function ReportTable({
               >
                 <th
                   scope="row"
-                  className="sticky left-0 z-10 max-w-[12rem] truncate bg-white py-2 pr-3 text-left font-normal dark:bg-neutral-900"
+                  className="frozen-col max-w-[12rem] truncate py-2 pr-3 text-left font-normal"
                 >
-                  <span className="block truncate">{expense.title}</span>
-                  <span className="block text-xs opacity-50">
-                    {formatCalendarDate(expense.spent_on)}
+                  <span className="flex items-center gap-2">
+                    <CategoryIcon
+                      icon={categoryFor(expense.category).icon}
+                      label={categoryFor(expense.category).label}
+                      className="size-7 text-sm"
+                    />
+                    <span className="min-w-0">
+                      <span className="block truncate">{expense.title}</span>
+                      <span className="block text-xs opacity-50">
+                        {formatCalendarDate(expense.spent_on)}
+                      </span>
+                    </span>
                   </span>
                 </th>
                 <td className="tnum px-3 py-2 text-right">
@@ -191,7 +206,7 @@ export function ReportTable({
 
           <tfoot>
             <tr className="border-t-2 border-black/20 font-medium dark:border-white/25">
-              <th className="sticky left-0 z-10 bg-white py-2 pr-3 text-left dark:bg-neutral-900">
+              <th className="frozen-col py-2 pr-3 text-left">
                 Total
               </th>
               <td className="tnum px-3 py-2 text-right">
@@ -235,27 +250,16 @@ export function ReportTable({
 
       <div>
         <h2 className="mb-2 text-sm font-semibold">Where everyone stands</h2>
-        <ul className="divide-y divide-black/5 dark:divide-white/10">
-          {balances.map((balance) => (
-            <li
-              key={balance.member_id}
-              className="flex items-center justify-between gap-3 py-2 text-sm"
-            >
-              <span className="truncate">
-                {members.find((member) => member.id === balance.member_id)?.name}
-              </span>
-              <span className="flex items-center gap-4 text-xs opacity-60">
-                <span className="tnum">
-                  paid {formatMoney(balance.paid_minor, currency)}
-                </span>
-                <span className="tnum">
-                  owed {formatMoney(balance.owed_minor, currency)}
-                </span>
-                <NetAmount minor={balance.net_minor} currency={currency} />
-              </span>
-            </li>
-          ))}
-        </ul>
+        {/* The same component as the Balances tab, rather than a second
+            hand-laid-out version. Inline spans with a gap put each row's
+            figures wherever the numbers happened to end, so the columns did
+            not line up between rows. A table aligns them by construction. */}
+        <BalanceTable
+          currency={currency}
+          members={members}
+          you={you}
+          balances={balances}
+        />
       </div>
     </div>
   );

@@ -47,7 +47,14 @@ export default async function GroupPage({
     settlements: view.settlements,
   };
 
-  const balances = computeBalances(ledger);
+  // computeBalances returns rows in member-id order, which is meaningless to
+  // read. Reordered to match the alphabetical member list so every table in
+  // the app lists people the same way.
+  const order = new Map(view.members.map((member, index) => [member.id, index]));
+  const balances = computeBalances(ledger).sort(
+    (a, b) =>
+      (order.get(a.member_id) ?? 0) - (order.get(b.member_id) ?? 0),
+  );
   const transfers = view.group.simplify_payments
     ? simplifyTransfers(balances)
     : directDebts(ledger);

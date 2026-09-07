@@ -89,9 +89,16 @@ export async function getGroupBundle(
 
   const raw = data as RawBundle;
 
+  // Sorted by name here rather than in SQL, so it uses the reader's locale
+  // collation. Note this is display order only: split.ts orders by member id
+  // for its remainder rotation, and that must not follow a name change.
+  const members = [...raw.members].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+  );
+
   return {
     group: raw.group,
-    members: raw.members,
+    members,
     expenses: raw.expenses.map((expense) => ({
       ...expense,
       amount_minor: toMinor(expense.amount_minor),

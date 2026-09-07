@@ -103,7 +103,7 @@ export function PaymentList({
                       disabled={busyId === settlement.id}
                       onClick={() => setDeleted(settlement, false)}
                     >
-                      restore
+                      Restore
                     </button>
                   ) : (
                     <>
@@ -111,14 +111,14 @@ export function PaymentList({
                         className="underline underline-offset-2"
                         onClick={() => setEditing(settlement)}
                       >
-                        edit
+                        Edit
                       </button>
                       <button
                         className="underline underline-offset-2 disabled:opacity-40"
                         disabled={busyId === settlement.id}
                         onClick={() => setDeleted(settlement, true)}
                       >
-                        delete
+                        Delete
                       </button>
                     </>
                   )}

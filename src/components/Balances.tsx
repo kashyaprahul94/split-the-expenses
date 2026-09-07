@@ -70,7 +70,7 @@ export function Balances({
                     className={`${quietButton} px-2.5 py-1 text-xs`}
                     onClick={() => onSettle(transfer)}
                   >
-                    record
+                    Record
                   </button>
                 </span>
               </li>

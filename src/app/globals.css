@@ -1,20 +1,46 @@
 @import "tailwindcss";
 
+/**
+ * Theme is an explicit choice, not a guess.
+ *
+ * Light is the default — the app is mostly a table of numbers, and that is
+ * what people expect to read on white. Dark is opt-in via the toggle, stored
+ * per device, and applied by `data-theme` on <html> before first paint.
+ *
+ * This rewires Tailwind's `dark:` variant to follow that attribute instead of
+ * the OS setting, so every existing `dark:` class keeps working and the toggle
+ * actually controls them.
+ */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 :root {
-  --background: #ffffff;
+  --background: #f6f6f7;
+  /* Cards, dialogs, and — importantly — the frozen first column of a table.
+     It must be fully opaque: a translucent surface lets the row scroll
+     visibly underneath a pinned column. */
+  --surface: #ffffff;
   --foreground: #171717;
+  --muted: #6b6b70;
+  --border: rgba(0, 0, 0, 0.11);
+  --raised: rgba(0, 0, 0, 0.035);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+:root[data-theme="dark"] {
+  --background: #0b0b0c;
+  --surface: #17171a;
+  --foreground: #ededed;
+  --muted: #9c9ca3;
+  --border: rgba(255, 255, 255, 0.14);
+  --raised: rgba(255, 255, 255, 0.06);
 }
 
 @theme inline {
   --color-background: var(--background);
+  --color-surface: var(--surface);
   --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-line: var(--border);
+  --color-raised: var(--raised);
 }
 
 body {
@@ -28,6 +54,35 @@ body {
     sans-serif;
 }
 
+/* Tailwind v4's Preflight sets `cursor: default` on buttons, so without this
+   every button in the app feels inert on a desktop. Restored for everything
+   that actually responds to a click, and made explicit for the disabled case
+   so a dead button says so. */
+button:not(:disabled),
+[role="button"],
+label,
+summary,
+select:not(:disabled),
+input[type="checkbox"]:not(:disabled),
+input[type="radio"]:not(:disabled),
+input[type="file"]:not(:disabled) {
+  cursor: pointer;
+}
+
+button:disabled,
+select:disabled,
+input:disabled {
+  cursor: not-allowed;
+}
+
+/* Text fields are the exception: a pointer over an editable field is wrong. */
+label:has(input[type="text"]),
+label:has(input[type="date"]),
+label:has(input[type="number"]),
+label:has(textarea) {
+  cursor: auto;
+}
+
 /* iOS Safari zooms the whole page when a focused input's font is under 16px,
    and it does not zoom back out. This is a correctness rule, not a taste one,
    so it lives here rather than depending on every form remembering it. */
@@ -37,8 +92,24 @@ textarea {
   font-size: max(16px, 1rem);
 }
 
-/* Money must line up in columns. Without tabular figures the report table's
-   digits are proportionally spaced and the column reads as noise. */
+/* Money must line up in columns. Without tabular figures the digits are
+   proportionally spaced and the column reads as noise. */
 .tnum {
   font-variant-numeric: tabular-nums;
+}
+
+/**
+ * A column pinned while the rest of the table scrolls under it.
+ *
+ * The opaque background is the whole point — with a translucent one the rows
+ * slide visibly behind the frozen column. The right-hand border stands in for
+ * the edge of the scrolled content, so it reads as a boundary rather than as
+ * a column that happens to be stuck.
+ */
+.frozen-col {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--surface);
+  box-shadow: inset -1px 0 0 var(--border);
 }

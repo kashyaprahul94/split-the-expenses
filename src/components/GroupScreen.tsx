@@ -12,6 +12,7 @@ import { ExpenseForm } from "./ExpenseForm";
 import { ExpenseList } from "./ExpenseList";
 import { GroupSettings, SharePanel } from "./GroupSettings";
 import { SettleUp } from "./SettleUp";
+import { ThemeToggle } from "./ThemeToggle";
 import { PaymentList } from "./PaymentList";
 import { Card, Money, SectionTitle, primaryButton, quietButton } from "./ui";
 
@@ -98,6 +99,7 @@ export function GroupScreen({
           >
             Settings
           </button>
+          <ThemeToggle />
         </div>
       </header>
 

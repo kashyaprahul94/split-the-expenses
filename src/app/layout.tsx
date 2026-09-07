@@ -14,11 +14,35 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
+/**
+ * Applies the stored theme before the first paint.
+ *
+ * This has to be a blocking inline script in the head. Doing it in an effect
+ * would render the light palette first and then swap, which is a white flash
+ * on every navigation for anyone using dark mode.
+ *
+ * Light is the default, so an unset or unreadable preference falls through to
+ * it — including when localStorage throws, which Safari does in private mode.
+ */
+const applyTheme = `
+try {
+  var stored = localStorage.getItem("ste.theme");
+  document.documentElement.dataset.theme = stored === "dark" ? "dark" : "light";
+} catch (e) {
+  document.documentElement.dataset.theme = "light";
+}
+`;
+
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className="h-full antialiased">
+    // The script sets data-theme before React hydrates, so the server's
+    // markup and the DOM legitimately differ on this one attribute.
+    <html lang="en" data-theme="light" className="h-full antialiased" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: applyTheme }} />
+      </head>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );

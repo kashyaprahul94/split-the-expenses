@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { saveExpenseAction } from "@/app/actions";
 import type { MemberView } from "@/lib/groups";
 import { newId } from "@/lib/ids";
+import { CATEGORIES, categoryValue } from "@/lib/categories";
 import { today } from "@/lib/dates";
 import {
   formatMinor,
@@ -22,8 +23,6 @@ import {
   primaryButton,
   quietButton,
 } from "./ui";
-
-const CATEGORIES = ["food", "travel", "stay", "groceries", "drinks", "other"];
 
 export function ExpenseForm({
   slug,
@@ -57,7 +56,7 @@ export function ExpenseForm({
     editing ? toInputValue(editing.amount_minor, currency) : "",
   );
   const [description, setDescription] = useState(editing?.description ?? "");
-  const [category, setCategory] = useState(editing?.category ?? "");
+  const [category, setCategory] = useState(categoryValue(editing?.category));
   const [paidBy, setPaidBy] = useState(
     editing?.paid_by ?? you ?? members[0]?.id ?? "",
   );
@@ -264,19 +263,18 @@ export function ExpenseForm({
       </Field>
 
       <Field label="Category" hint="Optional. Only used in the report.">
-        <input
+        <select
           className={inputStyle}
           value={category}
           onChange={(event) => setCategory(event.target.value)}
-          list="expense-categories"
-          placeholder="food"
-          maxLength={40}
-        />
-        <datalist id="expense-categories">
+        >
+          <option value="">No category</option>
           {CATEGORIES.map((item) => (
-            <option key={item} value={item} />
+            <option key={item.id} value={item.id}>
+              {item.icon}  {item.label}
+            </option>
           ))}
-        </datalist>
+        </select>
       </Field>
 
       {/* ------------------------------------------------------- splitting -- */}
@@ -403,7 +401,7 @@ export function ExpenseForm({
                 className="ml-auto underline underline-offset-2"
                 onClick={() => absorbShortfall(you)}
               >
-                put it on me
+                Put it on me
               </button>
             ) : null}
           </div>

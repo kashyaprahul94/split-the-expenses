@@ -22,6 +22,7 @@ import { newId, newSlug } from "@/lib/ids";
 import { getDeviceKey } from "@/lib/device";
 import { isCalendarDate } from "@/lib/dates";
 import { parseGroupFile } from "@/lib/portable";
+import { isCategoryId } from "@/lib/categories";
 import { parseAmountMinor, parsePercentBp, isCurrencyCode } from "@/lib/money";
 import { computeShares, type SplitInput } from "@/lib/split";
 import type {
@@ -563,7 +564,11 @@ export async function saveExpenseAction(
       title,
       description: clean(input.description, MAX_NOTE) || null,
       amountMinor: amount.value,
-      category: clean(input.category, 40) || null,
+      // Only the known ids are accepted from the form. Rows written before
+      // the fixed list existed keep whatever they had — categories never
+      // touch balances, so a stray value is harmless and rewriting it would
+      // lose information.
+      category: isCategoryId(clean(input.category, 40)) ? clean(input.category, 40) : null,
       paidBy: input.paidBy,
       spentOn: input.spentOn,
       splitMode: input.splitMode,

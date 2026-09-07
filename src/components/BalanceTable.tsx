@@ -51,12 +51,16 @@ export function BalanceTable({
   return (
     <div className="space-y-2">
       {/* Six columns will not fit a phone, so the table scrolls inside its own
-          box with the name pinned, rather than the page scrolling sideways. */}
-      <div className="-mx-4 overflow-x-auto px-4">
+          box with the name pinned, rather than the page scrolling sideways.
+
+          No negative margin on this box. With `-mx-4 px-4` the scrollport
+          starts a rem left of the table, so `left: 0` pins the frozen column
+          outside the table and rows slide visibly through the gap beside it. */}
+      <div className="overflow-x-auto">
         <table className="w-full min-w-max border-collapse text-sm">
           <thead>
             <tr className="border-b border-black/10 dark:border-white/15">
-              <th className="sticky left-0 z-10 bg-white py-2 pr-3 text-left font-medium dark:bg-neutral-900">
+              <th className="frozen-col py-2 pr-3 text-left font-medium">
                 Person
               </th>
               <th className="px-3 py-2 text-right font-medium">
@@ -104,7 +108,7 @@ export function BalanceTable({
               >
                 <th
                   scope="row"
-                  className="sticky left-0 z-10 max-w-[10rem] truncate bg-white py-2 pr-3 text-left font-normal dark:bg-neutral-900"
+                  className="frozen-col max-w-[10rem] truncate py-2 pr-3 text-left font-normal"
                 >
                   {nameOf(balance.member_id)}
                   {balance.member_id === you ? (
@@ -152,7 +156,7 @@ export function BalanceTable({
 
           <tfoot>
             <tr className="border-t-2 border-black/20 font-medium dark:border-white/25">
-              <th className="sticky left-0 z-10 bg-white py-2 pr-3 text-left dark:bg-neutral-900">
+              <th className="frozen-col py-2 pr-3 text-left">
                 Total
               </th>
               <td className="tnum px-3 py-2 text-right">

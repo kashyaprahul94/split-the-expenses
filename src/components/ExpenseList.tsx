@@ -5,10 +5,11 @@ import { useRouter } from "next/navigation";
 import { setExpenseDeletedAction } from "@/app/actions";
 import type { MemberView } from "@/lib/groups";
 import { formatCalendarDate } from "@/lib/dates";
+import { categoryFor } from "@/lib/categories";
 import type { CurrencyCode, Expense, ExpenseShare } from "@/lib/types";
 import { ExpenseForm } from "./ExpenseForm";
 import { Dialog } from "./Dialog";
-import { Empty, ErrorNote, Money, quietButton } from "./ui";
+import { CategoryIcon, Empty, ErrorNote, Money, quietButton } from "./ui";
 
 export function ExpenseList({
   slug,
@@ -69,13 +70,18 @@ export function ExpenseList({
           return (
             <li key={expense.id} className={removed ? "opacity-50" : ""}>
               <div className="flex items-start gap-3 py-3">
+                <CategoryIcon
+                  icon={categoryFor(expense.category).icon}
+                  label={categoryFor(expense.category).label}
+                  className="mt-0.5"
+                />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">
                     {removed ? <s>{expense.title}</s> : expense.title}
                   </p>
                   <p className="mt-0.5 text-xs opacity-60">
                     {nameOf(expense.paid_by)} paid · {formatCalendarDate(expense.spent_on)}
-                    {expense.category ? ` · ${expense.category}` : ""}
+                    {expense.category ? ` · ${categoryFor(expense.category).label}` : ""}
                   </p>
                   {yourShare && !removed ? (
                     <p className="mt-0.5 text-xs opacity-60">
@@ -97,7 +103,7 @@ export function ExpenseList({
                         disabled={busyId === expense.id}
                         onClick={() => setDeleted(expense, false)}
                       >
-                        restore
+                        Restore
                       </button>
                     ) : (
                       <>
@@ -105,14 +111,14 @@ export function ExpenseList({
                           className="underline underline-offset-2"
                           onClick={() => setEditing(expense)}
                         >
-                          edit
+                          Edit
                         </button>
                         <button
                           className="underline underline-offset-2 disabled:opacity-40"
                           disabled={busyId === expense.id}
                           onClick={() => setDeleted(expense, true)}
                         >
-                          delete
+                          Delete
                         </button>
                       </>
                     )}

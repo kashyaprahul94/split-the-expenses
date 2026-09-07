@@ -5,6 +5,7 @@ import { getDeviceKey } from "@/lib/device";
 import { getGroupBundle } from "@/lib/groups";
 import { ReportTable } from "@/components/ReportTable";
 import { Card, Money, SectionTitle } from "@/components/ui";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +27,14 @@ export default async function ReportPage({
     settlements: view.settlements,
   };
 
-  const balances = computeBalances(ledger);
+  // computeBalances returns rows in member-id order, which is meaningless to
+  // read. Reordered to match the alphabetical member list so every table in
+  // the app lists people the same way.
+  const order = new Map(view.members.map((member, index) => [member.id, index]));
+  const balances = computeBalances(ledger).sort(
+    (a, b) =>
+      (order.get(a.member_id) ?? 0) - (order.get(b.member_id) ?? 0),
+  );
   const totals = groupTotals(ledger);
 
   return (
@@ -43,12 +51,15 @@ export default async function ReportPage({
             per head
           </p>
         </div>
-        <Link
-          href={`/g/${slug}`}
-          className="shrink-0 text-xs underline underline-offset-2 opacity-70"
-        >
-          back to group
-        </Link>
+        <div className="flex shrink-0 items-center gap-3">
+          <Link
+            href={`/g/${slug}`}
+            className="text-xs underline underline-offset-2 opacity-70"
+          >
+            Back to group
+          </Link>
+          <ThemeToggle />
+        </div>
       </header>
 
       <Card>

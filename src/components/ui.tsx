@@ -14,7 +14,9 @@ export function Card({
 }) {
   return (
     <section
-      className={`rounded-xl border border-black/10 bg-white p-4 dark:border-white/15 dark:bg-white/5 ${className}`}
+      // An opaque surface token, not a translucent overlay: a frozen table
+      // column sits on this colour and must hide the rows scrolling under it.
+      className={`rounded-xl border border-line bg-surface p-4 ${className}`}
     >
       {children}
     </section>
@@ -83,6 +85,32 @@ export function NetAmount({
   );
 }
 
+/**
+ * The category badge beside an expense: a round avatar-style disc, so the list
+ * scans by shape before it is read. Decorative — the category name is already
+ * in the line beneath — so it is hidden from screen readers rather than
+ * announced as an emoji.
+ */
+export function CategoryIcon({
+  icon,
+  label,
+  className = "",
+}: {
+  icon: string;
+  label: string;
+  className?: string;
+}) {
+  return (
+    <span
+      className={`inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-raised text-base leading-none ${className}`}
+      title={label}
+      aria-hidden="true"
+    >
+      {icon}
+    </span>
+  );
+}
+
 export function Empty({ children }: { children: ReactNode }) {
   return <p className="py-6 text-center text-sm opacity-60">{children}</p>;
 }
@@ -104,11 +132,11 @@ export const buttonStyle =
 
 export const primaryButton = `${buttonStyle} bg-black text-white hover:bg-black/85 dark:bg-white dark:text-black dark:hover:bg-white/85`;
 
-export const quietButton = `${buttonStyle} border border-black/15 hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10`;
+export const quietButton = `${buttonStyle} border border-line hover:bg-raised`;
 
 /** 16px minimum, or iOS Safari zooms the page on focus and never zooms back. */
 export const inputStyle =
-  "w-full rounded-lg border border-black/15 bg-white px-3 py-2.5 text-base outline-none focus:border-black/40 dark:border-white/20 dark:bg-black/30 dark:focus:border-white/50";
+  "w-full rounded-lg border border-line bg-surface px-3 py-2.5 text-base outline-none focus:border-foreground/40";
 
 export function Field({
   label,

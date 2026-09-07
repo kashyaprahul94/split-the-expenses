@@ -243,7 +243,7 @@ export function GroupSettings({
                         setRenameTo(member.name);
                       }}
                     >
-                      rename
+                      Rename
                     </button>
                     {youAreCreator &&
                     member.id !== group.created_by &&
@@ -252,7 +252,7 @@ export function GroupSettings({
                         className="text-xs text-rose-700 underline underline-offset-2 dark:text-rose-400"
                         onClick={() => setRemoving(member)}
                       >
-                        remove
+                        Remove
                       </button>
                     ) : null}
                   </span>

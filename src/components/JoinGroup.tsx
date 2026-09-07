@@ -82,7 +82,7 @@ export function JoinGroup({
                   onClick={() => join({ memberId: member.id })}
                 >
                   <span>{member.name}</span>
-                  <span className="opacity-40">that&apos;s me</span>
+                  <span className="opacity-40">That&apos;s me</span>
                 </button>
               </li>
             ))}
