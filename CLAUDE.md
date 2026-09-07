@@ -236,14 +236,7 @@ Same as the `find-the-imposter` project next door, for the obvious reason that
 it is known to work on free tiers:
 
 - **Next.js 15 (App Router)** + React 19, TypeScript 5.x, Tailwind v4, Vercel.
-- **Supabase Postgres** for storage, connected exactly as in the sibling
-  project: `NEXT_PUBLIC_SUPABASE_URL` plus
-  `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (`sb_publishable_…`), Supabase's
-  current API key system. **Not** the legacy anon JWT — the publishable key is
-  revocable on its own and carries no embedded expiry. Both ship in the browser
-  bundle by design; RLS is what protects the data, not key secrecy.
-  The privileged counterpart is `SUPABASE_SECRET_KEY` (`sb_secret_…`),
-  server-side only, used solely to prove RLS denies what it should.
+- **Supabase Postgres** for storage, reached **only from the server**.
 - `nanoid` for ids and slugs, `qrcode.react` for the join QR.
 
 ### Where this differs from find-the-imposter, architecturally
@@ -256,7 +249,36 @@ ledger is the point, it must survive months, and it must be consistent. So:
 - **Realtime is a nicety, not the mechanism.** Two people rarely add expenses in
   the same second. Refetch on focus and after any write; consider Supabase
   realtime later, but don't build the app around it.
-- **RLS must allow update and delete**, unlike the append-only history there.
+- **The browser never touches Supabase.** This is the sharpest break from the
+  sibling, which hands the publishable key to the client and relies on
+  permissive policies. That works there because a room code and two revealed
+  words are not secrets and the data is disposable. Here the ledger holds
+  names and amounts and lasts months.
+
+  A publishable key ships in the JS bundle, so it is public. Permissive
+  policies plus a public key means anyone can enumerate and read *every*
+  group — at which point "the link is the password" is simply false. So:
+
+  - **RLS on every table with no policies at all.** `anon` and
+    `authenticated` can read nothing and write nothing.
+  - **All access goes through the Next.js server**, which holds
+    `SUPABASE_SECRET_KEY` and connects as `service_role`. `src/lib/supabase.ts`
+    imports `server-only`, so pulling it into a client component fails the
+    build rather than leaking the key.
+  - The slug from the URL is checked by our own server code before any query.
+
+  Consequence: **no Supabase realtime**, since that needs a browser key. The
+  plan already called realtime a nicety rather than the mechanism, so this
+  costs nothing — refetch on focus and after writes.
+
+- **Writes that span rows go through SQL functions**, not multiple REST calls.
+  An expense and its shares are one transaction (`save_expense`), because two
+  HTTP calls are two transactions and a half-written expense is a corrupt
+  ledger. Same for multi-payee settlements (`save_settlements`) and for soft
+  deletes, which write their activity row in the same transaction.
+
+- **The share-sum invariant is enforced by the database too**, as a deferred
+  constraint trigger, not only by `src/lib/split.ts`.
 
 ## Locked decisions
 
@@ -297,7 +319,31 @@ These cost time there and will again:
   protected, count rows with a privileged key and compare.
 - **Inputs must be ≥16px** or iOS Safari zooms the page on focus.
 - **`.env.example` is committed; `.env.local` is gitignored.** Real values only
-  in the latter.
+  in the latter. Note the default `.gitignore` line `.env*` swallows
+  `.env.example` too, so it needs an explicit `!.env.example`.
+
+## Traps found in this project
+
+- **`create-next-app@latest` now scaffolds Next 16.** Several things it emits
+  are invalid on 15: `LayoutProps<"/">` as a global, `eslint-config-next`
+  subpath exports (15 needs the `FlatCompat` form), and a
+  `.next/dev/types` tsconfig include. Pin `typescript` to `~5.9`, not `^5`.
+- **A `CASE` expression in plpgsql resolves *both* arms against the row type.**
+  A trigger shared between two tables must use separate `IF` branches, or
+  `new.expense_id` fails when it fired on `expenses`. Cost one round trip.
+- **`create table if not exists` does nothing to an existing table**, so a
+  constraint expected to grow (the activity `kind` list) must be re-applied
+  with `alter table ... drop constraint if exists` / `add constraint` for a
+  re-run of `schema.sql` to converge.
+- **Foreign keys to `members` are `deferrable initially deferred`.** Deleting
+  a group cascades to members and expenses in one statement with no ordering
+  guarantee, so an immediately-checked reference fails halfway through.
+  Deferred, deleting a member who has paid for something still fails, which is
+  the rule we want.
+- **Next's dev overlay serialises `cookies()` results into the RSC payload.**
+  So in `npm run dev` the httpOnly device cookie appears in the page source.
+  It is only ever the reader's own key, never another member's, and production
+  does not do it — but check leaks against a production build, not dev.
 
 ## Questions resolved (2026-09-07) — nothing blocking the build
 
@@ -333,4 +379,34 @@ npm run dev
 npm run dev -- -H 0.0.0.0                 # real phones over LAN
 NEXT_DIST_DIR=.next-verify npx next build # safe while a dev server runs
 npm run typecheck
+npm test                                  # pure libs, incl. property tests
+
+npm run db:smoke      # what only a real database can prove: the constraints
+npm run verify:rls    # that anon can read and write nothing
+npm run smoke:http    # that the pages render it (needs a server running)
 ```
+
+`smoke:http` takes `SMOKE_BASE` to point at a production server instead of
+dev — worth doing, because dev and production genuinely differ (see below).
+
+## Identity is a cookie, not localStorage
+
+The plan said `device_key` in localStorage. Once every page became
+server-rendered that stopped working: the server has to know who you are
+*while* it renders, and it cannot read localStorage. So middleware issues an
+**httpOnly `ste_device` cookie**, and `src/lib/device.ts` is the only place
+identity comes from.
+
+Two consequences worth keeping:
+
+- **Server actions never take a device key or an actor id as a parameter.**
+  They read the cookie. If the client could name the actor, anyone could pin
+  their edits on someone else and the activity log would be worse than
+  useless.
+- **`getGroupBundle` strips `device_key` from every member** and exposes only
+  `claimed: boolean`. A device key is a capability — whoever holds it *is*
+  that member — so shipping raw member rows would hand everyone in a group the
+  means to impersonate everyone else. `smoke:http` asserts this directly.
+
+localStorage still holds the recently-opened list, which is a shortcut and
+nothing more.

@@ -9,7 +9,11 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "db:push": "bash scripts/apply-schema.sh",
+    "verify:rls": "node --env-file=.env.local scripts/verify-rls.mjs",
+    "db:smoke": "node --env-file=.env.local scripts/smoke-db.mjs",
+    "smoke:http": "node --env-file=.env.local scripts/smoke-http.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
@@ -17,7 +21,8 @@
     "next": "^15.5.0",
     "qrcode.react": "^4.1.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "server-only": "^0.0.1"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
