@@ -4,10 +4,11 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { setExpenseDeletedAction } from "@/app/actions";
 import type { MemberView } from "@/lib/groups";
+import { formatCalendarDate } from "@/lib/dates";
 import type { CurrencyCode, Expense, ExpenseShare } from "@/lib/types";
 import { ExpenseForm } from "./ExpenseForm";
 import { Dialog } from "./Dialog";
-import { Empty, ErrorNote, Money, formatDate, quietButton } from "./ui";
+import { Empty, ErrorNote, Money, quietButton } from "./ui";
 
 export function ExpenseList({
   slug,
@@ -73,7 +74,7 @@ export function ExpenseList({
                     {removed ? <s>{expense.title}</s> : expense.title}
                   </p>
                   <p className="mt-0.5 text-xs opacity-60">
-                    {nameOf(expense.paid_by)} paid · {formatDate(expense.spent_on)}
+                    {nameOf(expense.paid_by)} paid · {formatCalendarDate(expense.spent_on)}
                     {expense.category ? ` · ${expense.category}` : ""}
                   </p>
                   {yourShare && !removed ? (

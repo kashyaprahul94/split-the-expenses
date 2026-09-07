@@ -33,6 +33,7 @@
 -- drop function if exists public.create_group(text,text,text,text,text,text,text);
 -- drop function if exists public.add_member(text,text,text,text,text);
 -- drop function if exists public.rename_member(text,text,text);
+-- drop function if exists public.remove_member(text,text);
 -- drop function if exists public.claim_member(text,text);
 -- drop function if exists public.set_group_settings(text,text,boolean,text);
 -- drop function if exists public.set_settlement_deleted(text,boolean,text);
@@ -55,6 +56,13 @@ create table if not exists public.groups (
   -- spread. A trip abroad means a second group.
   currency          text        not null default 'INR',
   simplify_payments boolean     not null default false,
+  -- The member who created the group. Deliberately *not* a foreign key: the
+  -- group row is written before the member exists, so the reference would have
+  -- to be deferrable, and a deferred check pending on this table would then
+  -- block every later ALTER TABLE in the same transaction — including
+  -- `enable row level security`. A dangling value here simply means "no known
+  -- creator", which the code handles.
+  created_by        text,
   created_at        timestamptz not null default now(),
 
   constraint groups_name_present check (length(btrim(name)) > 0),
@@ -70,11 +78,9 @@ create table if not exists public.members (
   id         text        primary key,
   group_id   text        not null references public.groups (id) on delete cascade,
   name       text        not null,
-  -- Set when a device claims this member. Null means nobody has claimed it,
-  -- which is what the join screen offers to new arrivals so they pick an
-  -- existing "Sam" instead of creating a second one.
-  device_key text,
   created_at timestamptz not null default now(),
+  -- Devices live in member_devices, not here: one person has a phone and a
+  -- laptop, and a single device_key column cannot hold both.
 
   constraint members_name_present check (length(btrim(name)) > 0),
   -- Names are the identity here, so they have to be unique within a group.
@@ -84,6 +90,81 @@ create table if not exists public.members (
   -- to the same group as its expense.
   constraint members_group_scoped unique (group_id, id)
 );
+
+
+-- -------------------------------------------------- member_devices ---
+
+-- Which devices are which person. One member has many devices — a phone and a
+-- laptop are the same human — but within a group a device is exactly one
+-- member, which is what the primary key enforces.
+--
+-- A device key is a capability: whoever holds it *is* that member. So these
+-- rows never leave the database. `group_bundle` takes a device key and returns
+-- only the member id it resolves to, rather than handing the page a list of
+-- keys to match against.
+create table if not exists public.member_devices (
+  group_id   text        not null,
+  member_id  text        not null,
+  device_key text        not null,
+  created_at timestamptz not null default now(),
+
+  primary key (group_id, device_key),
+  -- Checked immediately, unlike the other member references in this schema.
+  -- Those are deferred so that deleting a group can remove members and the
+  -- rows pointing at them in one statement; this one cascades instead, so it
+  -- has nothing to wait for.
+  --
+  -- It also must not be deferred: the backfill below inserts into this table,
+  -- and a pending deferred check makes Postgres refuse to ALTER the table
+  -- later in the same transaction — which is exactly what enabling RLS is.
+  --   ERROR: cannot ALTER TABLE ... because it has pending trigger events
+  constraint member_devices_member_fk
+    foreign key (group_id, member_id) references public.members (group_id, id)
+    on delete cascade
+);
+
+create index if not exists member_devices_member_idx
+  on public.member_devices (member_id);
+
+-- If an earlier run created this table with a deferrable foreign key, make it
+-- immediate. Must happen before the backfill below: with rows inserted and a
+-- deferred check still pending, Postgres refuses to ALTER the table at all.
+do $$
+begin
+  if exists (
+    select 1
+      from pg_constraint
+     where conname = 'member_devices_member_fk'
+       and condeferrable
+  ) then
+    alter table public.member_devices drop constraint member_devices_member_fk;
+    alter table public.member_devices add constraint member_devices_member_fk
+      foreign key (group_id, member_id) references public.members (group_id, id)
+      on delete cascade;
+  end if;
+end $$;
+
+
+-- Migration from the one-device-per-member design. Idempotent: it only fires
+-- while the old column is still there.
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'members'
+      and column_name = 'device_key'
+  ) then
+    insert into public.member_devices (group_id, member_id, device_key)
+    select group_id, id, device_key
+      from public.members
+     where device_key is not null
+    on conflict do nothing;
+
+    drop index if exists public.members_one_device_per_group;
+    alter table public.members drop column device_key;
+  end if;
+end $$;
 
 
 -- -------------------------------------------------------------- expenses ---
@@ -209,10 +290,25 @@ create table if not exists public.activity (
 -- Re-applied on every run so that adding a kind here is enough to update an
 -- existing database. Drop-then-add is safe: it is validated against the
 -- existing rows as it goes back on.
+-- Added after the first release, so existing groups need the column and a
+-- best guess at who created them: the earliest member, which is exactly who
+-- create_group inserts alongside the group.
+alter table public.groups add column if not exists created_by text;
+
+update public.groups
+   set created_by = (
+     select m.id from public.members m
+      where m.group_id = groups.id
+      order by m.created_at
+      limit 1
+   )
+ where created_by is null;
+
+
 alter table public.activity drop constraint if exists activity_kind_known;
 alter table public.activity add constraint activity_kind_known check (kind in (
   'group_created',
-  'member_added', 'member_renamed', 'member_claimed',
+  'member_added', 'member_renamed', 'member_claimed', 'member_removed',
   'expense_added', 'expense_edited', 'expense_deleted', 'expense_restored',
   'settlement_added', 'settlement_edited',
   'settlement_deleted', 'settlement_restored',
@@ -345,15 +441,37 @@ create constraint trigger expense_shares_reconcile
 -- One consistent snapshot of a group. Six separate queries can interleave with
 -- someone else's write and produce a report whose column totals do not match
 -- its own grand total; this cannot.
-create or replace function public.group_bundle(p_slug text)
+-- The old single-argument form has to go explicitly: `create or replace` with
+-- an extra defaulted parameter makes a *second* function rather than replacing
+-- the first, and then group_bundle('x') is ambiguous.
+drop function if exists public.group_bundle(text);
+
+create or replace function public.group_bundle(
+  p_slug       text,
+  p_device_key text default null
+)
 returns jsonb
 language sql
 stable
 as $$
   select jsonb_build_object(
     'group',       to_jsonb(g),
-    'members',     coalesce((select jsonb_agg(to_jsonb(m) order by m.created_at)
+    -- Built field by field rather than to_jsonb(m), so that adding a column to
+    -- members can never quietly start publishing it to every browser.
+    'members',     coalesce((select jsonb_agg(jsonb_build_object(
+                               'id',           m.id,
+                               'group_id',     m.group_id,
+                               'name',         m.name,
+                               'created_at',   m.created_at,
+                               'claimed',      exists(select 1 from public.member_devices d
+                                                      where d.member_id = m.id),
+                               'device_count', (select count(*) from public.member_devices d
+                                                where d.member_id = m.id)
+                             ) order by m.created_at)
                              from public.members m where m.group_id = g.id), '[]'::jsonb),
+    -- Resolved here, so no device key is ever sent out for the page to compare.
+    'you',         (select d.member_id from public.member_devices d
+                    where d.group_id = g.id and d.device_key = p_device_key),
     'expenses',    coalesce((select jsonb_agg(to_jsonb(e) order by e.spent_on desc, e.created_at desc)
                              from public.expenses e where e.group_id = g.id), '[]'::jsonb),
     'shares',      coalesce((select jsonb_agg(to_jsonb(s))
@@ -635,14 +753,6 @@ end;
 $$;
 
 
--- A device claims exactly one member per group, and a member is claimed by at
--- most one device. Without this, one phone could be two people in the same
--- group, which makes "who am I" unanswerable.
-create unique index if not exists members_one_device_per_group
-  on public.members (group_id, device_key)
-  where device_key is not null;
-
-
 -- Creating a group is three writes — the group, the person creating it, and
 -- the log entry — so it is one function. A group that exists with nobody in it
 -- is a dead end the creator cannot recover from.
@@ -659,11 +769,16 @@ returns void
 language plpgsql
 as $$
 begin
-  insert into public.groups (id, slug, name, currency)
-  values (p_id, p_slug, p_name, p_currency);
+  insert into public.groups (id, slug, name, currency, created_by)
+  values (p_id, p_slug, p_name, p_currency, p_member_id);
 
-  insert into public.members (id, group_id, name, device_key)
-  values (p_member_id, p_id, p_member_name, p_device_key);
+  insert into public.members (id, group_id, name)
+  values (p_member_id, p_id, p_member_name);
+
+  if p_device_key is not null then
+    insert into public.member_devices (group_id, member_id, device_key)
+    values (p_id, p_member_id, p_device_key);
+  end if;
 
   insert into public.activity (id, group_id, actor_member, kind, subject_id, summary)
   values (gen_random_uuid()::text, p_id, p_member_id, 'group_created', p_id, p_name);
@@ -682,8 +797,17 @@ returns void
 language plpgsql
 as $$
 begin
-  insert into public.members (id, group_id, name, device_key)
-  values (p_id, p_group_id, p_name, p_device_key);
+  insert into public.members (id, group_id, name)
+  values (p_id, p_group_id, p_name);
+
+  if p_device_key is not null then
+    -- The adder's own device may already be attached to someone else in this
+    -- group; moving it here would silently change who they are. Only attach a
+    -- device that is not yet spoken for.
+    insert into public.member_devices (group_id, member_id, device_key)
+    values (p_group_id, p_id, p_device_key)
+    on conflict (group_id, device_key) do nothing;
+  end if;
 
   insert into public.activity (id, group_id, actor_member, kind, subject_id, summary)
   values (
@@ -735,8 +859,92 @@ end;
 $$;
 
 
--- Someone arriving by link picks the member that is already them, rather than
--- creating a second "Sam" alongside the one holding all the expenses.
+-- Remove someone from a group.
+--
+-- Only possible for a member who appears nowhere in the ledger. A member with
+-- expenses or payments against them cannot be deleted at any price: doing so
+-- would orphan the splits and break every balance in the group. The foreign
+-- keys enforce that too, but this checks first so the refusal can say why and
+-- name the person.
+--
+-- Restricted to whoever created the group. That is a guardrail against a
+-- mis-tap, not a security control — there is no auth here, and anyone with the
+-- link could claim the creator's name from the join screen. It exists because
+-- removing people is the one destructive action in the app.
+create or replace function public.remove_member(
+  p_id           text,
+  p_actor_member text
+)
+returns void
+language plpgsql
+as $$
+declare
+  target_group text;
+  target_name  text;
+  creator      text;
+  appearances  int;
+begin
+  select group_id, name into target_group, target_name
+    from public.members where id = p_id;
+
+  if not found then
+    raise exception 'No such member: %', p_id using errcode = 'no_data_found';
+  end if;
+
+  select created_by into creator from public.groups where id = target_group;
+
+  if creator is not null and p_actor_member is distinct from creator then
+    raise exception 'Only the person who created this group can remove people'
+      using errcode = 'insufficient_privilege';
+  end if;
+
+  if p_id = creator then
+    raise exception 'The group creator cannot be removed'
+      using errcode = 'check_violation';
+  end if;
+
+  select
+      (select count(*) from public.expenses       where paid_by = p_id)
+    + (select count(*) from public.expense_shares where member_id = p_id)
+    + (select count(*) from public.settlements
+        where from_member = p_id or to_member = p_id)
+    into appearances;
+
+  if appearances > 0 then
+    raise exception
+      'Cannot remove %: they appear in % expense or payment record(s). Rename them instead.',
+      target_name, appearances
+      using errcode = 'foreign_key_violation';
+  end if;
+
+  -- Keep the history, drop the attribution. The activity rows stay so the
+  -- group can still see what happened, and nothing is left dangling.
+  update public.activity set actor_member = null where actor_member = p_id;
+
+  -- Their devices go with them, by cascade.
+  delete from public.members where id = p_id;
+
+  insert into public.activity (id, group_id, actor_member, kind, subject_id, summary)
+  values (
+    gen_random_uuid()::text,
+    target_group,
+    p_actor_member,
+    'member_removed',
+    p_id,
+    target_name
+  );
+end;
+$$;
+
+
+-- Someone arriving by link says which member they are, rather than creating a
+-- second "Sam" alongside the one holding all the expenses.
+--
+-- A member can be claimed by several devices, because one person has a phone
+-- and a laptop. Attaching a second device is therefore allowed rather than
+-- refused — the confirmation that it really is the same person happens in the
+-- UI, and the trust model already lets anyone with the link edit anything, so
+-- this grants no capability the link did not.
 create or replace function public.claim_member(
   p_id         text,
   p_device_key text
@@ -747,30 +955,51 @@ as $$
 declare
   target_group text;
   target_name  text;
-  claimed_by   text;
+  previous     text;
 begin
-  select group_id, name, device_key
-    into target_group, target_name, claimed_by
+  select group_id, name into target_group, target_name
     from public.members where id = p_id;
 
   if not found then
     raise exception 'No such member: %', p_id using errcode = 'no_data_found';
   end if;
 
-  -- Re-claiming from the same device is a no-op, not an error: it happens
-  -- whenever someone reopens the link.
-  if claimed_by is not null and claimed_by is distinct from p_device_key then
-    raise exception 'Someone is already using this name'
-      using errcode = 'unique_violation';
+  select member_id into previous
+    from public.member_devices
+   where group_id = target_group and device_key = p_device_key;
+
+  -- Reopening the link from a device that is already this member is a no-op,
+  -- not an error.
+  if previous is not distinct from p_id then
+    return;
   end if;
 
-  update public.members set device_key = p_device_key where id = p_id;
+  -- A device is one member per group, so switching identity replaces the row
+  -- rather than adding a second. This is the "actually I'm Alex, not Sam" fix.
+  insert into public.member_devices (group_id, member_id, device_key)
+  values (target_group, p_id, p_device_key)
+  on conflict (group_id, device_key)
+    do update set member_id = excluded.member_id, created_at = now();
 
-  if claimed_by is null then
-    insert into public.activity (id, group_id, actor_member, kind, subject_id, summary)
-    values (gen_random_uuid()::text, target_group, p_id, 'member_claimed', p_id, target_name);
-  end if;
+  insert into public.activity (id, group_id, actor_member, kind, subject_id, summary)
+  values (gen_random_uuid()::text, target_group, p_id, 'member_claimed', p_id, target_name);
 end;
+$$;
+
+
+-- Detach a device. Used by "this isn't me" and by dropping a device you no
+-- longer have. The last one can go: the member simply becomes unclaimed again
+-- and shows up on the join screen, which is recoverable. Losing the member
+-- would not be.
+create or replace function public.release_device(
+  p_group_id   text,
+  p_device_key text
+)
+returns void
+language sql
+as $$
+  delete from public.member_devices
+   where group_id = p_group_id and device_key = p_device_key;
 $$;
 
 
@@ -819,6 +1048,9 @@ $$;
 
 alter table public.groups         enable row level security;
 alter table public.members        enable row level security;
+-- The most sensitive table in the schema: these rows are the capabilities that
+-- decide who anyone is.
+alter table public.member_devices enable row level security;
 alter table public.expenses       enable row level security;
 alter table public.expense_shares enable row level security;
 alter table public.settlements    enable row level security;

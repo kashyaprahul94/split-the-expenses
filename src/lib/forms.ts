@@ -24,10 +24,16 @@ export interface CreateGroupInput {
 
 export interface JoinGroupInput {
   slug: string;
-  /** Claim an existing unclaimed member... */
+  /** Claim an existing member... */
   memberId?: string;
   /** ...or say "I'm someone else" and add one. */
   newName?: string;
+  /**
+   * Required to attach to a member who is already on another device. The
+   * server refuses without it, so a mis-tap on a name that is taken cannot
+   * quietly reassign who you are — the UI has to have asked first.
+   */
+  confirmShared?: boolean;
 }
 
 export interface ExpenseFormInput {

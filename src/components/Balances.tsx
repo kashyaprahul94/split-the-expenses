@@ -1,32 +1,30 @@
 "use client";
 
-import { useState } from "react";
 import type { MemberBalance, Transfer } from "@/lib/balances";
 import type { MemberView } from "@/lib/groups";
 import type { CurrencyCode } from "@/lib/types";
-import { SettleUp } from "./SettleUp";
-import { Dialog } from "./Dialog";
-import { Empty, Money, NetAmount, primaryButton, quietButton } from "./ui";
+import { BalanceTable } from "./BalanceTable";
+import { Empty, Money, quietButton } from "./ui";
 
 export function Balances({
-  slug,
   currency,
   members,
   you,
   balances,
   transfers,
   simplified,
+  onSettle,
 }: {
-  slug: string;
   currency: CurrencyCode;
   members: MemberView[];
   you: string | null;
   balances: MemberBalance[];
   transfers: Transfer[];
   simplified: boolean;
+  /** Opens the settle-up form, pre-filled with this transfer. Owned by the
+   * group screen, because the Payments tab needs the same form. */
+  onSettle: (transfer: Transfer) => void;
 }) {
-  const [settling, setSettling] = useState<Transfer | null>(null);
-
   const nameOf = (memberId: string) =>
     members.find((member) => member.id === memberId)?.name ?? "someone";
   const label = (memberId: string) =>
@@ -36,31 +34,12 @@ export function Balances({
 
   return (
     <div className="space-y-4">
-      <ul className="divide-y divide-black/5 dark:divide-white/10">
-        {balances.map((balance) => (
-          <li
-            key={balance.member_id}
-            className="flex items-center justify-between gap-3 py-2"
-          >
-            <span className="min-w-0 truncate text-sm">
-              {nameOf(balance.member_id)}
-              {balance.member_id === you ? (
-                <span className="opacity-50"> (you)</span>
-              ) : null}
-            </span>
-            <span className="flex items-center gap-3">
-              <span className="text-xs opacity-50">
-                {balance.net_minor > 0
-                  ? "is owed"
-                  : balance.net_minor < 0
-                    ? "owes"
-                    : "settled up"}
-              </span>
-              <NetAmount minor={balance.net_minor} currency={currency} />
-            </span>
-          </li>
-        ))}
-      </ul>
+      <BalanceTable
+        currency={currency}
+        members={members}
+        you={you}
+        balances={balances}
+      />
 
       <div>
         <h3 className="mb-2 text-sm font-semibold">
@@ -89,7 +68,7 @@ export function Balances({
                   />
                   <button
                     className={`${quietButton} px-2.5 py-1 text-xs`}
-                    onClick={() => setSettling(transfer)}
+                    onClick={() => onSettle(transfer)}
                   >
                     record
                   </button>
@@ -113,31 +92,6 @@ export function Balances({
         ) : null}
       </div>
 
-      <button
-        className={`${primaryButton} w-full`}
-        onClick={() =>
-          setSettling({ from: you ?? members[0]?.id ?? "", to: "", amount_minor: 0 })
-        }
-      >
-        Record a payment
-      </button>
-
-      <Dialog
-        open={settling !== null}
-        title="Record a payment"
-        onClose={() => setSettling(null)}
-      >
-        {settling ? (
-          <SettleUp
-            slug={slug}
-            currency={currency}
-            members={members}
-            you={you}
-            initial={settling}
-            onDone={() => setSettling(null)}
-          />
-        ) : null}
-      </Dialog>
     </div>
   );
 }

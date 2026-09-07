@@ -127,14 +127,3 @@ export function Field({
     </label>
   );
 }
-
-export function formatDate(iso: string): string {
-  // Parsed as parts rather than `new Date(iso)`, which would treat a bare date
-  // as UTC midnight and show the previous day west of Greenwich.
-  const [year, month, day] = iso.split("-").map(Number);
-  return new Date(year, month - 1, day).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}

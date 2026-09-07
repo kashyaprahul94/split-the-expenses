@@ -8,13 +8,13 @@ import {
 } from "@/app/actions";
 import type { MemberView } from "@/lib/groups";
 import { toInputValue } from "@/lib/money";
+import { formatCalendarDate } from "@/lib/dates";
 import type { CurrencyCode, Settlement } from "@/lib/types";
 import { Dialog } from "./Dialog";
 import {
   Empty,
   ErrorNote,
   Field,
-  formatDate,
   inputStyle,
   Money,
   primaryButton,
@@ -85,7 +85,7 @@ export function PaymentList({
                   <span className="font-medium">{label(settlement.to_member)}</span>
                 </p>
                 <p className="mt-0.5 text-xs opacity-60">
-                  {formatDate(settlement.settled_on)}
+                  {formatCalendarDate(settlement.settled_on)}
                   {settlement.note ? ` · ${settlement.note}` : ""}
                 </p>
               </div>

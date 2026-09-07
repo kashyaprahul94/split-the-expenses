@@ -19,6 +19,8 @@ const publicKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 const TABLES = [
   "groups",
   "members",
+  // The capability table: a leak here is total impersonation.
+  "member_devices",
   "expenses",
   "expense_shares",
   "settlements",
@@ -63,6 +65,13 @@ async function seed() {
     { id: payer, group_id: groupId, name: "Probe A" },
     { id: other, group_id: groupId, name: "Probe B" },
   ]);
+
+  // Attach a device, so member_devices has a row to hide. Without this the
+  // check on the most sensitive table in the schema is inconclusive.
+  await privileged.rpc("claim_member", {
+    p_id: payer,
+    p_device_key: crypto.randomUUID().replaceAll("-", ""),
+  });
 
   await privileged.rpc("save_expense", {
     p_id: id("e"),

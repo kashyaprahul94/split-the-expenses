@@ -11,6 +11,7 @@ import { Dialog } from "./Dialog";
 import { ExpenseForm } from "./ExpenseForm";
 import { ExpenseList } from "./ExpenseList";
 import { GroupSettings, SharePanel } from "./GroupSettings";
+import { SettleUp } from "./SettleUp";
 import { PaymentList } from "./PaymentList";
 import { Card, Money, SectionTitle, primaryButton, quietButton } from "./ui";
 
@@ -30,6 +31,7 @@ export function GroupScreen({
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("expenses");
   const [adding, setAdding] = useState(false);
+  const [settling, setSettling] = useState<Transfer | null>(null);
   const [sharing, setSharing] = useState(false);
   const [settings, setSettings] = useState(false);
 
@@ -60,9 +62,9 @@ export function GroupScreen({
   const yourBalance = balances.find((balance) => balance.member_id === you);
 
   return (
-    <main className="mx-auto w-full max-w-2xl space-y-4 p-4 pb-24">
-      <header className="flex items-start justify-between gap-3 pt-2">
-        <div className="min-w-0">
+    <main className="mx-auto w-full max-w-2xl space-y-4 p-4 pb-10">
+      <header className="flex flex-wrap items-start justify-between gap-3 pt-2">
+        <div className="min-w-0 flex-1">
           <h1 className="truncate text-xl font-semibold tracking-tight">
             {group.name}
           </h1>
@@ -71,15 +73,27 @@ export function GroupScreen({
             <Money minor={totals.total_minor} currency={group.currency} /> total
           </p>
         </div>
-        <div className="flex shrink-0 gap-1">
+
+        {/*
+          Whole-group actions, as opposed to the per-tab one below. Report used
+          to be a small text link in a corner, which made the app's most
+          convincing screen the hardest one to find.
+        */}
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+          <Link
+            href={`/g/${group.slug}/report`}
+            className={`${quietButton} px-3 py-1.5 text-xs`}
+          >
+            Report
+          </Link>
           <button
-            className={`${quietButton} px-2.5 py-1.5 text-xs`}
+            className={`${quietButton} px-3 py-1.5 text-xs`}
             onClick={() => setSharing(true)}
           >
             Share
           </button>
           <button
-            className={`${quietButton} px-2.5 py-1.5 text-xs`}
+            className={`${quietButton} px-3 py-1.5 text-xs`}
             onClick={() => setSettings(true)}
           >
             Settings
@@ -109,8 +123,8 @@ export function GroupScreen({
         {(
           [
             ["expenses", "Expenses"],
-            ["balances", "Balances"],
             ["payments", "Payments"],
+            ["balances", "Balances"],
           ] as [Tab, string][]
         ).map(([key, label]) => (
           <button
@@ -127,21 +141,32 @@ export function GroupScreen({
         ))}
       </nav>
 
+      {/*
+        The primary action sits with the thing it acts on, right under the tab
+        strip: adding an expense belongs to Expenses, recording a payment to
+        both Payments and Balances. Previously it was one button pinned to the
+        bottom of the viewport that meant "add expense" regardless of what you
+        were looking at.
+      */}
+      {tab === "expenses" ? (
+        <button className={`${primaryButton} w-full`} onClick={() => setAdding(true)}>
+          Add an expense
+        </button>
+      ) : (
+        <button
+          className={`${primaryButton} w-full`}
+          onClick={() =>
+            setSettling({ from: you ?? members[0]?.id ?? "", to: "", amount_minor: 0 })
+          }
+        >
+          Record a payment
+        </button>
+      )}
+
       <Card>
         {tab === "expenses" ? (
           <>
-            <SectionTitle
-              action={
-                <Link
-                  href={`/g/${group.slug}/report`}
-                  className="text-xs underline underline-offset-2 opacity-70"
-                >
-                  report
-                </Link>
-              }
-            >
-              Expenses
-            </SectionTitle>
+            <SectionTitle>Expenses</SectionTitle>
             <ExpenseList
               slug={group.slug}
               currency={group.currency}
@@ -155,13 +180,13 @@ export function GroupScreen({
           <>
             <SectionTitle>Balances</SectionTitle>
             <Balances
-              slug={group.slug}
               currency={group.currency}
               members={members}
               you={you}
               balances={balances}
               transfers={transfers}
               simplified={group.simplify_payments}
+              onSettle={setSettling}
             />
           </>
         ) : (
@@ -178,18 +203,6 @@ export function GroupScreen({
         )}
       </Card>
 
-      {/* Thumb-reachable, and the one thing people open the app to do. */}
-      <div className="fixed inset-x-0 bottom-0 border-t border-black/10 bg-white/90 p-3 backdrop-blur dark:border-white/15 dark:bg-black/80">
-        <div className="mx-auto max-w-2xl">
-          <button
-            className={`${primaryButton} w-full`}
-            onClick={() => setAdding(true)}
-          >
-            Add an expense
-          </button>
-        </div>
-      </div>
-
       <Dialog open={adding} title="Add an expense" onClose={() => setAdding(false)}>
         {adding ? (
           <ExpenseForm
@@ -198,6 +211,23 @@ export function GroupScreen({
             members={members}
             you={you}
             onDone={() => setAdding(false)}
+          />
+        ) : null}
+      </Dialog>
+
+      <Dialog
+        open={settling !== null}
+        title="Record a payment"
+        onClose={() => setSettling(null)}
+      >
+        {settling ? (
+          <SettleUp
+            slug={group.slug}
+            currency={group.currency}
+            members={members}
+            you={you}
+            initial={settling}
+            onDone={() => setSettling(null)}
           />
         ) : null}
       </Dialog>
@@ -212,6 +242,7 @@ export function GroupScreen({
             slug={group.slug}
             group={group}
             members={members}
+            view={view}
             onDone={() => setSettings(false)}
           />
         ) : null}

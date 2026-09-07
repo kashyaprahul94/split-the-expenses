@@ -4,7 +4,6 @@ import type {
   Expense,
   ExpenseShare,
   Group,
-  Member,
   Settlement,
 } from "./types";
 
@@ -16,17 +15,20 @@ import type {
 /**
  * A member as the browser is allowed to see them.
  *
- * Deliberately not `Member`: that has `device_key`, and a device key is a
- * capability — whoever holds it *is* that member. Sending the whole member row
- * to every person in the group would hand everyone the means to impersonate
- * everyone else. `claimed` is all the UI actually needs, to show who is still
- * free to pick on the join screen.
+ * Device keys are capabilities — whoever holds one *is* that member — so they
+ * live in `member_devices` and are never sent anywhere. `group_bundle` builds
+ * this shape in SQL and collapses the devices to a count, which means a new
+ * column on `members` cannot start leaking to browsers by accident.
  */
 export interface MemberView {
   id: string;
   group_id: string;
   name: string;
+  /** At least one device is attached. */
   claimed: boolean;
+  /** How many devices — shown so someone can tell a shared name from a
+   * genuinely second device of their own. */
+  device_count: number;
   created_at: string;
 }
 
@@ -56,7 +58,9 @@ const toMinor = (value: unknown): number => {
 
 interface RawBundle {
   group: Group;
-  members: Member[];
+  /** Already sanitised by group_bundle: no device keys, ever. */
+  members: MemberView[];
+  you: string | null;
   expenses: (Omit<Expense, "amount_minor"> & { amount_minor: unknown })[];
   shares: (Omit<ExpenseShare, "share_minor"> & { share_minor: unknown })[];
   settlements: (Omit<Settlement, "amount_minor"> & { amount_minor: unknown })[];
@@ -71,27 +75,23 @@ export async function getGroupBundle(
   slug: string,
   deviceKey: string | null,
 ): Promise<GroupView | null> {
-  const { data, error } = await db.rpc("group_bundle", { p_slug: slug });
+  // The device key goes *in* and only a member id comes back. Matching it
+  // against a list of members here would mean the database had to hand this
+  // process every member's key, and anything sent to the server is one
+  // serialisation mistake away from being sent to a browser.
+  const { data, error } = await db.rpc("group_bundle", {
+    p_slug: slug,
+    p_device_key: deviceKey,
+  });
 
   if (error) throw new Error(`Could not load group: ${error.message}`);
   if (!data) return null;
 
   const raw = data as RawBundle;
 
-  const you =
-    deviceKey === null
-      ? null
-      : (raw.members.find((member) => member.device_key === deviceKey)?.id ?? null);
-
   return {
     group: raw.group,
-    members: raw.members.map((member) => ({
-      id: member.id,
-      group_id: member.group_id,
-      name: member.name,
-      claimed: member.device_key !== null,
-      created_at: member.created_at,
-    })),
+    members: raw.members,
     expenses: raw.expenses.map((expense) => ({
       ...expense,
       amount_minor: toMinor(expense.amount_minor),
@@ -104,7 +104,7 @@ export async function getGroupBundle(
       ...settlement,
       amount_minor: toMinor(settlement.amount_minor),
     })),
-    you,
+    you: raw.you ?? null,
   };
 }
 
@@ -190,6 +190,34 @@ export async function claimMember(input: {
 }): Promise<void> {
   const { error } = await db.rpc("claim_member", {
     p_id: input.id,
+    p_device_key: input.deviceKey,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * Remove someone from the group. Only ever possible for a member who appears
+ * nowhere in the ledger — the database refuses the rest, because deleting a
+ * member with expenses would orphan the splits and break every balance.
+ */
+export async function removeMember(input: {
+  id: string;
+  actorMemberId: string | null;
+}): Promise<void> {
+  const { error } = await db.rpc("remove_member", {
+    p_id: input.id,
+    p_actor_member: input.actorMemberId,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** Detach this device from whoever it is currently attached to. */
+export async function releaseDevice(input: {
+  groupId: string;
+  deviceKey: string;
+}): Promise<void> {
+  const { error } = await db.rpc("release_device", {
+    p_group_id: input.groupId,
     p_device_key: input.deviceKey,
   });
   if (error) throw new Error(error.message);

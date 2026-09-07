@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { saveExpenseAction } from "@/app/actions";
 import type { MemberView } from "@/lib/groups";
 import { newId } from "@/lib/ids";
+import { today } from "@/lib/dates";
 import {
   formatMinor,
   formatMoney,
@@ -61,7 +62,7 @@ export function ExpenseForm({
     editing?.paid_by ?? you ?? members[0]?.id ?? "",
   );
   const [spentOn, setSpentOn] = useState(
-    editing?.spent_on ?? new Date().toISOString().slice(0, 10),
+    editing?.spent_on ?? today(),
   );
   const [splitMode, setSplitMode] = useState<SplitMode>(
     editing?.split_mode ?? "equal",

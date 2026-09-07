@@ -78,6 +78,25 @@ async function makeGroup(name, currency = "INR") {
   return { groupId, slug };
 }
 
+/** A group made the way the app makes them, so it has a recorded creator. */
+async function makeGroupViaRpc(name) {
+  const groupId = id("g");
+  const slug = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+  const creatorId = id("m");
+  const { error } = await db.rpc("create_group", {
+    p_id: groupId,
+    p_slug: slug,
+    p_name: name,
+    p_currency: "INR",
+    p_member_id: creatorId,
+    p_member_name: "Creator",
+    p_device_key: crypto.randomUUID().replaceAll("-", ""),
+  });
+  if (error) throw new Error(`could not create group: ${error.message}`);
+  createdGroups.push(groupId);
+  return { groupId, slug, creatorId };
+}
+
 async function makeMember(groupId, name) {
   const memberId = id("m");
   const { error } = await db
@@ -275,6 +294,124 @@ async function run() {
       p_actor_member: sam,
     }),
   );
+
+  // --------------------------------------------------- removing people ----
+  // The creator here is whoever create_group made; makeGroup inserts members
+  // directly, so this group has no creator and anyone may remove. The real
+  // creator restriction is exercised further down.
+  await mustReject(
+    "removing someone who paid for an expense",
+    db.rpc("remove_member", { p_id: priya, p_actor_member: priya }),
+    "Cannot remove",
+  );
+
+  await mustReject(
+    "removing someone who has a share of an expense",
+    db.rpc("remove_member", { p_id: alex, p_actor_member: priya }),
+    "Cannot remove",
+  );
+
+  const spare = await makeMember(groupId, "Spare");
+  await must(
+    "removing someone who appears nowhere",
+    db.rpc("remove_member", { p_id: spare, p_actor_member: priya }),
+  );
+
+  const afterRemoval = await db.rpc("group_bundle", { p_slug: slug, p_device_key: null });
+  if (!(afterRemoval.data?.members ?? []).some((m) => m.id === spare)) {
+    pass("they are gone from the group");
+  } else {
+    fail("they are gone from the group", "the member is still listed");
+  }
+
+  const removalLog = await db.rpc("group_activity", { p_group_id: groupId, p_limit: 50 });
+  if ((removalLog.data ?? []).some((row) => row.kind === "member_removed")) {
+    pass("the log recorded member_removed");
+  } else {
+    fail("the log recorded member_removed", "no member_removed entry");
+  }
+
+  // A group made through create_group has a creator, and only they may remove.
+  const owned = await makeGroupViaRpc("Creator group");
+  const outsiderMember = await makeMember(owned.groupId, "Outsider");
+  const spare2 = await makeMember(owned.groupId, "Spare2");
+
+  await mustReject(
+    "someone who did not create the group removing a person",
+    db.rpc("remove_member", { p_id: spare2, p_actor_member: outsiderMember }),
+    "Only the person who created",
+  );
+
+  await must(
+    "the creator removing a person",
+    db.rpc("remove_member", { p_id: spare2, p_actor_member: owned.creatorId }),
+  );
+
+  await mustReject(
+    "removing the creator themselves",
+    db.rpc("remove_member", { p_id: owned.creatorId, p_actor_member: owned.creatorId }),
+    "creator cannot be removed",
+  );
+
+  // ------------------------------------------------------ multi-device ----
+  // One person, a phone and a laptop. Both devices must resolve to the same
+  // member, and neither may displace the other.
+  const phone = crypto.randomUUID().replaceAll("-", "");
+  const laptop = crypto.randomUUID().replaceAll("-", "");
+
+  await must(
+    "a first device claimed Sam",
+    db.rpc("claim_member", { p_id: sam, p_device_key: phone }),
+  );
+  await must(
+    "a second device also claimed Sam",
+    db.rpc("claim_member", { p_id: sam, p_device_key: laptop }),
+  );
+
+  const asPhone = await db.rpc("group_bundle", { p_slug: slug, p_device_key: phone });
+  const asLaptop = await db.rpc("group_bundle", { p_slug: slug, p_device_key: laptop });
+
+  if (asPhone.data?.you === sam && asLaptop.data?.you === sam) {
+    pass("both devices resolve to the same member");
+  } else {
+    fail(
+      "both devices resolve to the same member",
+      `phone saw ${asPhone.data?.you}, laptop saw ${asLaptop.data?.you}, expected ${sam}`,
+    );
+  }
+
+  const samView = (asPhone.data?.members ?? []).find((m) => m.id === sam);
+  if (samView?.device_count === 2) pass("Sam is reported as having two devices");
+  else fail("Sam is reported as having two devices", `device_count is ${samView?.device_count}`);
+
+  // The bundle is what reaches the browser. It must not carry the keys.
+  const bundleText = JSON.stringify(asPhone.data);
+  if (!bundleText.includes(phone) && !bundleText.includes(laptop)) {
+    pass("the bundle carries no device keys at all");
+  } else {
+    fail("the bundle carries no device keys at all", "a device key is in group_bundle output");
+  }
+
+  // Switching identity moves the device rather than adding a second row.
+  await must(
+    "a device switched to a different member",
+    db.rpc("claim_member", { p_id: alex, p_device_key: laptop }),
+  );
+  const afterSwitch = await db.rpc("group_bundle", { p_slug: slug, p_device_key: laptop });
+  if (afterSwitch.data?.you === alex) pass("the switch took effect");
+  else fail("the switch took effect", `laptop resolves to ${afterSwitch.data?.you}`);
+
+  const samAfter = (afterSwitch.data?.members ?? []).find((m) => m.id === sam);
+  if (samAfter?.device_count === 1) pass("Sam keeps the device that did not move");
+  else fail("Sam keeps the device that did not move", `device_count is ${samAfter?.device_count}`);
+
+  await must(
+    "release_device detached the phone",
+    db.rpc("release_device", { p_group_id: groupId, p_device_key: phone }),
+  );
+  const afterRelease = await db.rpc("group_bundle", { p_slug: slug, p_device_key: phone });
+  if (afterRelease.data?.you === null) pass("the released device is a stranger again");
+  else fail("the released device is a stranger again", `still resolves to ${afterRelease.data?.you}`);
 
   // -------------------------------------------------------- settling up ----
   const settlementId = id("t");

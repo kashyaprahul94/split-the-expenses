@@ -6,6 +6,7 @@ import {
   claimMember,
   createGroup,
   getGroupBundle,
+  removeMember,
   renameMember,
   setGroupSettings,
   slugExists,
@@ -19,6 +20,8 @@ import {
 } from "@/lib/settlements";
 import { newId, newSlug } from "@/lib/ids";
 import { getDeviceKey } from "@/lib/device";
+import { isCalendarDate } from "@/lib/dates";
+import { parseGroupFile } from "@/lib/portable";
 import { parseAmountMinor, parsePercentBp, isCurrencyCode } from "@/lib/money";
 import { computeShares, type SplitInput } from "@/lib/split";
 import type {
@@ -70,6 +73,15 @@ function readableError(problem: unknown): string {
   }
   if (message.includes("already has expenses")) {
     return "The currency cannot change once a group has expenses.";
+  }
+  if (message.includes("Only the person who created")) {
+    return "Only the person who created this group can remove people.";
+  }
+  if (message.includes("creator cannot be removed")) {
+    return "The group creator cannot be removed.";
+  }
+  if (message.includes("Cannot remove")) {
+    return message;
   }
   if (message.includes("violates foreign key constraint")) {
     return "That person is not in this group.";
@@ -148,11 +160,18 @@ export async function joinGroupAction(
     if (input.memberId) {
       const target = view.members.find((member) => member.id === input.memberId);
       if (!target) return { ok: false, error: "That person is not in this group." };
-      // Claiming an already-claimed member would take the group's history away
-      // from whoever is actually using it.
-      if (target.claimed && view.you !== target.id) {
-        return { ok: false, error: "Someone is already using that name." };
+
+      // A member can be on several devices — one person, a phone and a laptop.
+      // But attaching to a name someone is already using has to be deliberate,
+      // so the UI must confirm it first. Without that gate a mis-tap silently
+      // makes you somebody else, and every expense you add lands on them.
+      if (target.claimed && view.you !== target.id && !input.confirmShared) {
+        return {
+          ok: false,
+          error: "That name is already set up on another device.",
+        };
       }
+
       await claimMember({ id: target.id, deviceKey });
     } else {
       const name = clean(input.newName ?? "", 60);
@@ -225,6 +244,61 @@ export async function renameMemberAction(input: {
   }
 }
 
+/**
+ * Remove someone from the group.
+ *
+ * Checked here *and* in the database. The check here exists to give a useful
+ * message; the one in the database is what actually holds, because this is the
+ * only destructive action in the app and it must not depend on the UI having
+ * asked nicely.
+ */
+export async function removeMemberAction(input: {
+  slug: string;
+  memberId: string;
+}): Promise<ActionResult> {
+  const found = await context(input.slug);
+  if ("error" in found) return { ok: false, error: found.error };
+  const { view } = found;
+
+  const target = view.members.find((member) => member.id === input.memberId);
+  if (!target) return { ok: false, error: "That person is not in this group." };
+
+  if (view.group.created_by && view.you !== view.group.created_by) {
+    return {
+      ok: false,
+      error: "Only the person who created this group can remove people.",
+    };
+  }
+  if (input.memberId === view.group.created_by) {
+    return { ok: false, error: "The group creator cannot be removed." };
+  }
+
+  const appearances =
+    view.expenses.filter((expense) => expense.paid_by === input.memberId).length +
+    view.shares.filter((share) => share.member_id === input.memberId).length +
+    view.settlements.filter(
+      (settlement) =>
+        settlement.from_member === input.memberId ||
+        settlement.to_member === input.memberId,
+    ).length;
+
+  if (appearances > 0) {
+    return {
+      ok: false,
+      error: `${target.name} appears in ${appearances} expense or payment record${appearances === 1 ? "" : "s"}. Rename them instead — removing them would break every balance.`,
+    };
+  }
+
+  try {
+    await removeMember({ id: input.memberId, actorMemberId: view.you });
+    revalidatePath(`/g/${input.slug}`);
+    revalidatePath(`/g/${input.slug}/report`);
+    return { ok: true };
+  } catch (problem) {
+    return { ok: false, error: readableError(problem) };
+  }
+}
+
 export async function setGroupSettingsAction(input: {
   slug: string;
   name: string;
@@ -250,6 +324,170 @@ export async function setGroupSettingsAction(input: {
   }
 }
 
+/**
+ * Rebuild a group from an exported file.
+ *
+ * Always creates a **new** group with fresh ids and a fresh slug, never writing
+ * over an existing one. Restoring should not be able to destroy the thing you
+ * were trying to rescue, and an import that silently merged into a live group
+ * would be unrecoverable. If the original still exists, you end up with both
+ * and can delete whichever you do not want.
+ *
+ * Expenses go in through save_expense, so the same reconcile trigger that
+ * guards ordinary writes also guards this one. A file cannot smuggle in a
+ * ledger that does not add up.
+ */
+export async function importGroupAction(input: {
+  fileText: string;
+}): Promise<ActionResult<{ slug: string }>> {
+  const parsed = parseGroupFile(input.fileText);
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+
+  const data = parsed.value;
+  const deviceKey = await getDeviceKey();
+  if (!deviceKey) return { ok: false, error: "Enable cookies to use this app." };
+
+  try {
+    let slug = newSlug();
+    for (let attempt = 0; attempt < 5 && (await slugExists(slug)); attempt++) {
+      slug = newSlug();
+    }
+
+    const groupId = newId();
+    // Ids are regenerated rather than reused, so importing the same file twice
+    // cannot collide with itself or with the group it came from.
+    const memberIdFor = new Map(
+      data.members.map((member) => [member.id, newId()]),
+    );
+
+    // The importing device becomes the first member in the file, so whoever
+    // restores a backup can immediately use it. They can switch on the join
+    // screen if that is not who they are.
+    const [first, ...rest] = data.members;
+
+    await createGroup({
+      id: groupId,
+      slug,
+      name: data.group.name,
+      currency: data.group.currency,
+      memberId: memberIdFor.get(first.id)!,
+      memberName: first.name,
+      deviceKey,
+    });
+
+    for (const member of rest) {
+      await addMember({
+        id: memberIdFor.get(member.id)!,
+        groupId,
+        name: member.name,
+        deviceKey: null,
+        actorMemberId: null,
+      });
+    }
+
+    for (const expense of data.expenses) {
+      const expenseId = newId();
+      await saveExpense({
+        id: expenseId,
+        groupId,
+        title: expense.title,
+        description: expense.description,
+        amountMinor: expense.amount_minor,
+        category: expense.category,
+        paidBy: memberIdFor.get(expense.paid_by)!,
+        spentOn: expense.spent_on,
+        splitMode: expense.split_mode,
+        shares: data.shares
+          .filter((share) => share.expense_id === expense.id)
+          .map((share) => ({
+            member_id: memberIdFor.get(share.member_id)!,
+            share_minor: share.share_minor,
+          })),
+        actorMemberId: null,
+      });
+
+      // Deleted expenses come back deleted. They are excluded from balances
+      // either way, but dropping them would lose the group's own history of
+      // what it decided to remove.
+      if (expense.deleted_at) {
+        await setExpenseDeleted({
+          id: expenseId,
+          deleted: true,
+          actorMemberId: null,
+        });
+      }
+    }
+
+    // save_settlements applies one date to the whole batch, so payments are
+    // grouped by their own date. Writing them as a single batch would silently
+    // move every payment to whichever date happened to come first.
+    const byDate = new Map<string, typeof data.settlements>();
+    for (const settlement of data.settlements) {
+      if (settlement.deleted_at) continue;
+      const existing = byDate.get(settlement.settled_on) ?? [];
+      existing.push(settlement);
+      byDate.set(settlement.settled_on, existing);
+    }
+
+    for (const [settledOn, rows] of byDate) {
+      await saveSettlements({
+        groupId,
+        rows: rows.map((settlement) => ({
+          id: newId(),
+          from_member: memberIdFor.get(settlement.from_member)!,
+          to_member: memberIdFor.get(settlement.to_member)!,
+          amount_minor: settlement.amount_minor,
+        })),
+        settledOn,
+        // Notes are per row and the batch takes one, so a shared note would be
+        // wrong. Individual notes are restored below.
+        note: null,
+        actorMemberId: null,
+      });
+    }
+
+    // Restore each payment's own note, which the batch write cannot carry.
+    const written = await getGroupBundle(slug, deviceKey);
+    if (written) {
+      const noted = data.settlements.filter((row) => !row.deleted_at && row.note);
+      for (const original of noted) {
+        const match = written.settlements.find(
+          (candidate) =>
+            candidate.note === null &&
+            candidate.settled_on === original.settled_on &&
+            candidate.amount_minor === original.amount_minor &&
+            candidate.from_member === memberIdFor.get(original.from_member) &&
+            candidate.to_member === memberIdFor.get(original.to_member),
+        );
+        if (!match) continue;
+        await saveSettlement({
+          id: match.id,
+          fromMember: match.from_member,
+          toMember: match.to_member,
+          amountMinor: match.amount_minor,
+          settledOn: match.settled_on,
+          note: original.note,
+          actorMemberId: null,
+        });
+      }
+    }
+
+    if (data.group.simplify_payments) {
+      await setGroupSettings({
+        id: groupId,
+        name: data.group.name,
+        simplifyPayments: true,
+        actorMemberId: null,
+      });
+    }
+
+    revalidatePath(`/g/${slug}`);
+    return { ok: true, value: { slug } };
+  } catch (problem) {
+    return { ok: false, error: readableError(problem) };
+  }
+}
+
 // ----------------------------------------------------------- expenses ---
 
 export async function saveExpenseAction(
@@ -269,7 +507,8 @@ export async function saveExpenseAction(
     return { ok: false, error: "Choose who paid." };
   }
 
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.spentOn)) {
+  // isCalendarDate, not a regex: a regex is happy with 2026-02-31.
+  if (!isCalendarDate(input.spentOn)) {
     return { ok: false, error: "Choose a date." };
   }
 
@@ -375,7 +614,7 @@ export async function saveSettlementsAction(
   if ("error" in found) return { ok: false, error: found.error };
   const { view } = found;
 
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.settledOn)) {
+  if (!isCalendarDate(input.settledOn)) {
     return { ok: false, error: "Choose a date." };
   }
 
@@ -441,7 +680,7 @@ export async function saveSettlementAction(
   if (input.from === input.to) {
     return { ok: false, error: "A payment needs two different people." };
   }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.settledOn)) {
+  if (!isCalendarDate(input.settledOn)) {
     return { ok: false, error: "Choose a date." };
   }
 

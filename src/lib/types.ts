@@ -14,6 +14,9 @@ export interface Group {
   /** Owned by the group, not the expense. Locked once an expense exists. */
   currency: CurrencyCode;
   simplify_payments: boolean;
+  /** The member who created the group. Null for groups that predate the
+   * column and had no members to guess from. */
+  created_by: string | null;
   created_at: string;
 }
 
@@ -21,8 +24,20 @@ export interface Member {
   id: string;
   group_id: string;
   name: string;
-  /** Set when a device claims this member. Null means nobody has claimed it. */
-  device_key: string | null;
+  created_at: string;
+}
+
+/**
+ * Which devices are which person. One member has many devices — a phone and a
+ * laptop are the same human — but a device is exactly one member per group.
+ *
+ * These rows never leave the server. A device key is a capability: whoever
+ * holds it *is* that member.
+ */
+export interface MemberDevice {
+  group_id: string;
+  member_id: string;
+  device_key: string;
   created_at: string;
 }
 
@@ -69,6 +84,7 @@ export type ActivityKind =
   | "member_added"
   | "member_renamed"
   | "member_claimed"
+  | "member_removed"
   | "expense_added"
   | "expense_edited"
   | "expense_deleted"

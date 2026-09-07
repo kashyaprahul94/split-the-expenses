@@ -6,6 +6,7 @@ import { saveSettlementsAction } from "@/app/actions";
 import type { Transfer } from "@/lib/balances";
 import type { MemberView } from "@/lib/groups";
 import { newId } from "@/lib/ids";
+import { today } from "@/lib/dates";
 import { toInputValue } from "@/lib/money";
 import type { CurrencyCode } from "@/lib/types";
 import { ErrorNote, Field, inputStyle, primaryButton, quietButton } from "./ui";
@@ -40,7 +41,7 @@ export function SettleUp({
     initial.amount_minor > 0 ? toInputValue(initial.amount_minor, currency) : "",
   );
   const [settledOn, setSettledOn] = useState(
-    new Date().toISOString().slice(0, 10),
+    today(),
   );
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
