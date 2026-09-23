@@ -310,8 +310,8 @@ These cost time there and will again:
   `Cannot read properties of undefined (reading 'fileExists')`.
 - **Never run two Next processes against the same `.next`.** A `next build`
   while `next dev` is running serves the browser chunks from another
-  compilation, and the symptoms are baffling. Wire `NEXT_DIST_DIR` into
-  `next.config.ts` from the start and use `.next-verify` for any second process.
+  compilation, and the symptoms are baffling. There is one build directory, so
+  stop the dev server before building, or check against the running one.
 - **Heredocs break under this shell wrapper.** Write scripts with the file tools,
   not `cat <<EOF`.
 - **BSD `sed` has no `\b`.** Use `perl -pi -e` for word-boundary rewrites.
@@ -377,7 +377,6 @@ else does.
 ```bash
 npm run dev
 npm run dev -- -H 0.0.0.0                 # real phones over LAN
-NEXT_DIST_DIR=.next-verify npx next build # safe while a dev server runs
 npm run typecheck
 npm test                                  # pure libs, incl. property tests
 

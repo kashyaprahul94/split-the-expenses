@@ -42,8 +42,5 @@ yarn-error.log*
 # the example is committed; real values live in .env.local only
 !.env.example
 
-# second Next process, never share .next (see CLAUDE.md)
-/.next-verify/
-
 # local database backups (may contain device keys)
 /backups/
